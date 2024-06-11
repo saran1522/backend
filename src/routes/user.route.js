@@ -1,8 +1,13 @@
 import { Router } from "express";
 import {
+  changePassword,
+  getCurrentUser,
   loginUser,
   logoutUser,
   registerUser,
+  updateAccountDetails,
+  updateUserAvatar,
+  updateUserCoverImage,
 } from "../controllers/user.controller.js";
 import { upload } from "../middlewares/multer.middleware.js";
 import { verifyJWT } from "../middlewares/auth.middleware.js";
@@ -24,6 +29,15 @@ router.route("/register").post(
 );
 
 router.route("/login").post(loginUser);
+router.route("/change-password").post(verifyJWT, changePassword);
+router.route("/current-user").post(verifyJWT, getCurrentUser);
+router.route("/update-account").post(verifyJWT, updateAccountDetails);
+router
+  .route("/avatar")
+  .patch(verifyJWT, upload.single("Avatar"), updateUserAvatar);
+router
+  .route("/cover-image")
+  .patch(verifyJWT, upload.single("coverImage"), updateUserCoverImage);
 
 // secured route
 // we are using varifyJWT middleware to check if the user is authenticated or not
