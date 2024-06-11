@@ -3,6 +3,20 @@ import { ApiError } from "../utils/ApiError.js";
 import { uploadOnCloudinary } from "../utils/cloudinary.js";
 import { User } from "../models/user.model.js";
 import { ApiResponse } from "../utils/ApiResponse.js";
+// import {isCorrectPassword} from "../uti
+
+const getTokens = async (userId) => {
+  try {
+    const user = await User.findById(userId);
+    const accessToken = await user.generateAccessToken();
+    const refreshToken = await user.generateRefreshToken();
+    user.refreshToken = refreshToken;
+    await user.save({ validateBeforeSave: false });
+    return { accessToken, refreshToken };
+  } catch {
+    throw new ApiError(500, "Something went wrong while generating tokens");
+  }
+};
 
 const registerUser = asyncHandler(async (req, res) => {
   // steps to register a user:
@@ -43,8 +57,14 @@ const registerUser = asyncHandler(async (req, res) => {
   // as req.body contains form data, req.files contains files uploaded from the frontend
   // every file in req.files is an array of object that contains many fields including filename, path, type etc
   // req.files.avatar[0].path will give us the path of the uploaded file
-  const localAvatarPath = req.files?.avatar[0]?.path;
-  const localCoverImagePath = req.files?.coverImage[0]?.path;
+  let localAvatarPath;
+  if (req.files && req.files.avatar && req.files.avatar.length > 0) {
+    localAvatarPath = await req.files?.avatar[0]?.path;
+  }
+  let localCoverImagePath;
+  if (req.files && req.files.coverImage && req.files.coverImage.length > 0) {
+    localCoverImagePath = await req.files?.coverImage[0]?.path;
+  }
 
   // checking if avatar is provided by user or not
   if (!localAvatarPath) {
@@ -67,7 +87,7 @@ const registerUser = asyncHandler(async (req, res) => {
     email,
     password,
     avatar: avatar?.url, // storing the cloudinary url in the database
-    coverImage: coverImage?.url || "", // storing the cloudinary url in the database
+    coverImage: coverImage?.url || "", // user may not provide cover image so we are storing empty string if cover image is not provided
   });
 
   // by using select method we can remove fields from the response
@@ -85,6 +105,103 @@ const registerUser = asyncHandler(async (req, res) => {
   // returning the response using ApiResponse class that we have created
   return res
     .status(201)
-    .json(ApiResponse(200, createdUser, "User registered successfully"));
+    .json(new ApiResponse(200, createdUser, "User registered successfully"));
 });
-export { registerUser };
+
+const loginUser = asyncHandler(async (req, res) => {
+  // take username or email and password from the request body
+  // check for username and email not empty
+  // find user error if not found
+  // check password match or not
+  // generate access token and refresh token
+
+  // getting the fields from the request body
+  const { username, email, password } = req.body;
+
+  // checking if username or email is provided by the user or not
+  if (!username && !email) {
+    throw new ApiError(400, "Username and email is required");
+  }
+
+  // finding the user (username or email) in the database using the User model
+  const user = await User.findOne({
+    $or: [{ username }, { email }],
+  });
+
+  // if user not found then throwing an error
+  if (!user) {
+    throw new ApiError(404, "User not found");
+  }
+
+  // checking if the password provided by the user is correct or not using the isCorrectPassword method we have created in the user model
+  const isPasswordValid = user.isCorrectPassword(password);
+
+  // if password is not valid then throwing an error
+  if (!isPasswordValid) {
+    throw new ApiError(401, "Invalid credentials");
+  }
+
+  // generating access token and refresh token using the getTokens function we have created at top
+  // that function using the generateAccessToken and generateRefreshToken methods we have created in the user model
+  const { accessToken, refreshToken } = await getTokens(user._id);
+
+  // getting the user from the database using the User model and removing password and refreshToken
+  const loggedInUser = await User.findById(user._id).select(
+    "-password -refreshToken"
+  );
+
+  // defining the options for the cookie
+  // by using these options we are making cookies modifiable only from backend (server )
+  // the frontend (client) can read them but can't modify them
+  const options = {
+    httpOnly: true,
+    secure: true,
+  };
+
+  // returning the response with cookies
+  // frontend can access the tokens from cookies and from response as well
+  return res
+    .status(200)
+    .cookie("refreshToken", refreshToken) // using cookie middleware to store refresh token
+    .cookie("accessToken", accessToken, options)
+    .json(
+      new ApiResponse(
+        200,
+        {
+          user: loggedInUser,
+          accessToken,
+          refreshToken,
+        },
+        "User logged in successfully"
+      )
+    );
+});
+
+const logoutUser = asyncHandler(async (req, res) => {
+  // logging out a user means removing the refresh token from the database
+  // and clearing the cookies from the frontend
+  // we are using varifyJWT middleware to check if the user is authenticated or not
+  // if the user is authenticated then only he can logout
+  // the varifyJWT middleware is also setting req.user to the user who is authenticated
+  // now we can access the user from req.user and remove it's refreshToken from the database
+
+  await User.findByIdAndUpdate(
+    req.user._id,
+    { refreshToken: undefined },
+    { new: true } // new: true will return the updated user without refreshToken
+  );
+
+  const options = {
+    httpOnly: true,
+    secure: true,
+  };
+
+  // clearing the cookies (refreshToken and accessToken) from the frontend using clearCookie method
+  // and returning the response
+  return res
+    .status(200)
+    .clearCookie("refreshToken", options)
+    .clearCookie("accessToken", options)
+    .json(new ApiResponse(200, {}, "User logged out successfully"));
+});
+export { registerUser, loginUser, logoutUser };
